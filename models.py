@@ -1,29 +1,25 @@
 import sqlalchemy as sa
 
-from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import relationship
+
+metadata = sa.MetaData()
 
 
-Base = declarative_base()
+Currency = sa.Table(
+    'currency', metadata,
+    sa.Column('id', sa.Integer, primary_key=True),
+    sa.Column('name', sa.String)
+)
 
 
-class Currency(Base):
-    __tablename__ = 'currency'
-    id = sa.Column(sa.Integer, primary_key=True)
-    name = sa.Column(sa.String)
-    rate = relationship("Rate", back_populates="currency")
-
-
-class Rate(Base):
-    __tablename__ = 'rate'
-    id = sa.Column(sa.Integer, primary_key=True)
-    currency_id = sa.Column(sa.ForeignKey(Currency.id))
-    date = sa.Column(sa.DateTime)
-    rate = sa.Column(sa.Float)
-    volume = sa.Column(sa.Float)
-    currency = relationship("Currency", back_populates="rate")
+Rate = sa.Table(
+    'rate', metadata,
+    sa.Column('id', sa.Integer, primary_key=True),
+    sa.Column('currency_id', None, sa.ForeignKey('currency.id')),
+    sa.Column('date', sa.DateTime),
+    sa.Column('rate', sa.Float),
+    sa.Column('volume', sa.Float)
+)
 
 
 def create_tables(engine):
-    Base.metadata.create_all(engine)
-
+    metadata.create_all(engine)

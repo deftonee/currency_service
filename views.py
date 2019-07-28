@@ -3,7 +3,7 @@ import aiohttp
 from aiohttp import web
 
 from enums import CurrencyEnum
-from helpers import save_rates, get_currencies
+from helpers import save_rates, get_currencies, param_to_int
 
 
 async def fetch(request):
@@ -17,5 +17,11 @@ async def fetch(request):
 
 async def currencies(request):
     objs = await get_currencies(request.app['db_engine'], **request.query)
-    return web.json_response([o.name for o in objs])
+    return web.json_response([[o.id, o.name] for o in objs])
+
+
+async def rates(request):
+    rate_id = param_to_int(request.match_info, 'rate_id', 0)
+    print(rate_id)
+    return web.Response(body='Success')
 

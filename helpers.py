@@ -1,7 +1,9 @@
-from aiohttp.web_exceptions import HTTPBadRequest
+import sqlalchemy as sa
+
+from typing import Dict
+
+from aiohttp.web_exceptions import HTTPBadRequest, HTTPInternalServerError
 from datetime import datetime
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy.sql import exists
 
 from enums import CurrencyEnum
 from models import Currency, Rate
@@ -11,51 +13,55 @@ PAGE_SIZE = 5
 
 
 def fill_currencies(engine):
-    Session = sessionmaker(bind=engine)
-    session = Session()
-
+    conn = engine.connect()
+    trans = conn.begin()
     for c in CurrencyEnum:
-        if not session.query(exists().where(Currency.name == c.value)).scalar():
-            session.add(Currency(name=c.value))
-    session.commit()
+        query = sa.select((1, )).where(Currency.c.name == c.value)
+        already_exists = conn.execute(query).scalar()
+        if not already_exists:
+            query = Currency.insert().values(name=c.value)
+            conn.execute(query)
+    trans.commit()
 
 
 async def save_rates(engine, c, rows):
-    Session = sessionmaker(bind=engine)
-    session = Session()
+    conn = engine.connect()
+    trans = conn.begin()
 
-    currency_id = session.query(Currency.id).filter(Currency.name == c.value)
-
+    query = sa.select((Currency.c.id, )).where(Currency.c.name == c.value)
+    currency_id = conn.execute(query).scalar()
+    if currency_id is None:
+        raise HTTPInternalServerError(text=f'Currency "{c.value}" not found')
     for mts, _, close, _, _, volume in rows:
-        session.add(
-            Rate(
-                currency_id=currency_id,
-                date=datetime.fromtimestamp(mts/1000),
-                rate=close,
-                volume=volume))
+        query = Rate.insert().values(
+            currency_id=currency_id,
+            date=datetime.fromtimestamp(mts/1000),
+            rate=close,
+            volume=volume)
+        conn.execute(query)
 
-    session.commit()
+    trans.commit()
 
 
-def param_to_int(params, name, default):
+def param_to_int(params: Dict, name: str, default: int) -> int:
     try:
         result = int(params.get(name, default))
     except ValueError:
-        raise HTTPBadRequest()
+        raise HTTPBadRequest(text=f'Invalid param "{name}" value')
     else:
         if result < 0:
-            raise HTTPBadRequest()
+            raise HTTPBadRequest(text=f'Invalid param "{name}" value')
         return result
 
 
 async def get_currencies(engine, **kwargs):
-    Session = sessionmaker(bind=engine)
-    session = Session()
+    conn = engine.connect()
 
     limit = param_to_int(kwargs, 'page_size', PAGE_SIZE)
     page = param_to_int(kwargs, 'page', 1)
     offset = limit * (page - 1)
 
-    currencies = session.query(Currency.name).limit(limit).offset(offset)
+    query = sa.select((Currency, )).limit(limit).offset(offset)
+    currencies = conn.execute(query).fetchall()
 
     return currencies
