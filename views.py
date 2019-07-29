@@ -3,7 +3,9 @@ import aiohttp
 from aiohttp import web
 
 from enums import CurrencyEnum
-from helpers import save_rates, get_currencies, param_to_int
+from helpers import (
+    save_rates, get_currencies, param_to_positive_int, get_last_rate,
+    get_avg_volume)
 
 
 async def fetch(request):
@@ -21,7 +23,9 @@ async def currencies(request):
 
 
 async def rates(request):
-    rate_id = param_to_int(request.match_info, 'rate_id', 0)
-    print(rate_id)
-    return web.Response(body='Success')
+    currency_id = param_to_positive_int(request.match_info, 'currency_id', 0)
+    rate = await get_last_rate(request.app['db_engine'], currency_id)
+    volume = await get_avg_volume(request.app['db_engine'], currency_id)
+
+    return web.json_response([rate, volume])
 

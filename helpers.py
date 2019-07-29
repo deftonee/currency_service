@@ -1,18 +1,21 @@
 import sqlalchemy as sa
 
-from typing import Dict
-
 from aiohttp.web_exceptions import HTTPBadRequest, HTTPInternalServerError
-from datetime import datetime
+from datetime import datetime, timedelta, date
+from sqlalchemy import func, and_
+from sqlalchemy.engine import Engine, RowProxy
+from typing import Dict, Optional, List, Any
 
 from enums import CurrencyEnum
 from models import Currency, Rate
 
 
 PAGE_SIZE = 5
+DAYS_TO_LOAD = 10
+DAYS_FOR_AVG_VOLUME = 10
 
 
-def fill_currencies(engine):
+def fill_currencies(engine: Engine):
     conn = engine.connect()
     trans = conn.begin()
     for c in CurrencyEnum:
@@ -24,26 +27,29 @@ def fill_currencies(engine):
     trans.commit()
 
 
-async def save_rates(engine, c, rows):
+async def save_rates(engine: Engine, c: CurrencyEnum, rows: List[List[Any]]):
     conn = engine.connect()
     trans = conn.begin()
 
+    border_date = date.today() - timedelta(days=DAYS_TO_LOAD - 1)
     query = sa.select((Currency.c.id, )).where(Currency.c.name == c.value)
     currency_id = conn.execute(query).scalar()
     if currency_id is None:
         raise HTTPInternalServerError(text=f'Currency "{c.value}" not found')
     for mts, _, close, _, _, volume in rows:
-        query = Rate.insert().values(
-            currency_id=currency_id,
-            date=datetime.fromtimestamp(mts/1000),
-            rate=close,
-            volume=volume)
-        conn.execute(query)
+        rate_time = datetime.fromtimestamp(mts/1000)
+        if rate_time.date() >= border_date:
+            query = Rate.insert().values(
+                currency_id=currency_id,
+                date=rate_time,
+                rate=close,
+                volume=volume)
+            conn.execute(query)
 
     trans.commit()
 
 
-def param_to_int(params: Dict, name: str, default: int) -> int:
+def param_to_positive_int(params: Dict, name: str, default: int) -> int:
     try:
         result = int(params.get(name, default))
     except ValueError:
@@ -54,14 +60,47 @@ def param_to_int(params: Dict, name: str, default: int) -> int:
         return result
 
 
-async def get_currencies(engine, **kwargs):
+async def get_currencies(engine: Engine, **kwargs) -> List[RowProxy]:
     conn = engine.connect()
 
-    limit = param_to_int(kwargs, 'page_size', PAGE_SIZE)
-    page = param_to_int(kwargs, 'page', 1)
+    limit = param_to_positive_int(kwargs, 'page_size', PAGE_SIZE)
+    page = param_to_positive_int(kwargs, 'page', 1)
     offset = limit * (page - 1)
 
     query = sa.select((Currency, )).limit(limit).offset(offset)
     currencies = conn.execute(query).fetchall()
 
     return currencies
+
+
+async def get_last_rate(engine: Engine, currency_id: int) -> Optional[float]:
+    conn = engine.connect()
+
+    query = sa.select(
+        (Rate.c.rate, )
+    ).where(
+        Rate.c.currency_id == currency_id
+    ).order_by(
+        Rate.c.date.desc()
+    ).limit(1)
+
+    rate = conn.execute(query).scalar()
+
+    return rate
+
+
+async def get_avg_volume(engine: Engine, currency_id: int) -> Optional[float]:
+    conn = engine.connect()
+
+    border_date = date.today() - timedelta(days=DAYS_FOR_AVG_VOLUME - 1)
+
+    query = sa.select(
+        (func.avg(Rate.c.volume), )
+    ).where(and_(
+        Rate.c.date >= border_date,
+        Rate.c.currency_id == currency_id
+    ))
+
+    volume = conn.execute(query).scalar()
+
+    return volume
